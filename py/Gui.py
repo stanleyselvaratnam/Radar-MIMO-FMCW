@@ -270,6 +270,9 @@ class DataThread(QThread):
 
 
     def FFT_Range_doppler_map(self, trimmed_data_np, count_Nc):
+
+        trimmed_data_np = trimmed_data_np[0, :] # Prends uniquement la première antenne 
+
         # calcule La range FFT
         f = np.fft.fft(trimmed_data_np) 
 
@@ -283,13 +286,17 @@ class DataThread(QThread):
         f = f [:int(150 / 2)]
         phase = phase[:int(150 / 2)]
         
-        if count_Nc<self.Nc:
-            if self.phase_matrix is None:           # Première phase
-                self.phase_matrix = phase[np.newaxis, :]  
-                self.fb_matrix=f[np.newaxis, :]
-            else:                                   # Ajouter les phases suivantes
-                self.phase_matrix = np.vstack((self.phase_matrix, phase))   # Concaténer verticalement Doppler FFT
-                self.fb_matrix = np.vstack((self.fb_matrix, f))             # Concaténer verticalement Range FFT
+        if count_Nc < self.Nc:
+            if self.phase_matrix is None:
+                self.phase_matrix = phase[np.newaxis, :]  # Initialiser avec une antenne
+                self.fb_matrix = f[np.newaxis, :]
+            else:
+                # Vérification des dimensions avant vstack()
+                if self.phase_matrix.shape[1] == phase.shape[0]:
+                    self.phase_matrix = np.vstack((self.phase_matrix, phase))
+                    self.fb_matrix = np.vstack((self.fb_matrix, f))
+                else:
+                    print(f"Dimension mismatch: phase_matrix {self.phase_matrix.shape} vs phase {phase.shape}")
             return None    
 
         if count_Nc==self.Nc:
@@ -640,12 +647,12 @@ class PlotManager:
                 
                 # Vérifie si les courbes existent déjà, sinon les créer
                 if self.i_curve is None:
-                    self.i_curves = [self.plot_widget.plot(pen=pg.intColor(i + 4)) for i in range(i_data.shape[0])]
-                    self.plot_RAW(len(data_np[0]),self.data_thread.te,self.PLOT_RAW_SAMPLES,np.max(data_np[0].real))
+                    self.i_curves = [self.plot_widget.plot(pen=pg.intColor(i + 4)) for i in range(i_data.shape[0])]     # Prends sur une seule antenne
+                    self.plot_RAW(len(data_np[0]),self.data_thread.te,self.PLOT_RAW_SAMPLES,np.max(data_np[0].real))    # Prends sur une seule antenne
 
 
                 if self.q_curve is None:
-                    self.q_curves = [self.plot_widget.plot(pen=pg.intColor(i + 4)) for i in range(q_data.shape[0])]
+                    self.q_curves = [self.plot_widget.plot(pen=pg.intColor(i + 4)) for i in range(q_data.shape[0])]     # Prends sur une seule antenne
 
                 # Tracer les données I et Q pour chaque antenne
                 for i in range(i_data.shape[0]):  # Boucle sur les 4 antennes
@@ -665,7 +672,7 @@ class PlotManager:
                     f = filter.apply(f)
                 
                 angle=np.angle(f)
-                frequence=np.abs(f[0])
+                frequence=np.abs(f[0]) # Prends sur une seule antenne 
 
                 # si log
                 if self.logscale:
