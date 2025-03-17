@@ -36,7 +36,7 @@ class DataThread(QThread):
         self.running = True
         self.data = None
         self.metadata = None
-        self.num_rx_antennas = 4     # Adaptation pour x antennes
+        self.num_rx_antennas = 5    # Adaptation pour x antennes
 
         self.smoothing_kernel_width = 0
         self.relative_peak_height=20
@@ -63,6 +63,7 @@ class DataThread(QThread):
         # signal generateur
         self.R = 3
         self.V = 0
+        self.A = 5
 
         self.phase_matrix=None
         self.fb_matrix=None
@@ -76,6 +77,11 @@ class DataThread(QThread):
     def set_V(self, V):
         self.V = V  
         print(f"New V value: {self.V}") 
+
+    # Mettre à jour vitesse signal synt
+    def set_A(self, A):
+        self.A = A  
+        print(f"New A value: {self.A}") 
 
     # Mettre à jour valeur smooting 
     def set_Smoothing(self, Smoothing):
@@ -114,8 +120,11 @@ class DataThread(QThread):
         t = 0
 
         # Déphasages entre les antennes en fonction de leur position
-        phase_shifts = [0, np.pi/4, np.pi/2,np.pi]  # Déphasage progressif
-        #phase_shifts = [0, np.pi/2, np.pi]  # Déphasage progressif
+        phase_shifts = [0, np.pi/4,  np.pi/3, np.pi/2,np.pi]  # Déphasage progressif
+        # phase_shifts = [0, np.pi/4, np.pi/2,np.pi]  # Déphasage progressif
+        # phase_shifts = [0, np.pi/2, np.pi]  # Déphasage progressif
+        # phase_shifts = [0, np.pi]  # Déphasage progressif
+        # phase_shifts = [0]  # Déphasage progressif
         #phase_shifts = [2 * np.pi * (i * d) / wavelength for i in range(self.num_rx_antennas)] # Déphasage progressif
         print(phase_shifts)
         while self.running:
@@ -343,14 +352,14 @@ class DataThread(QThread):
                 # Convertir seq en tableau NumPy
                 seq_np = np.array(seq, dtype=np.complex64)
 
-                # Réarranger en prenant une valeur toutes les 4 (pour les 4 antennes)
+                # Réarranger en prenant une valeur toutes les num_rx_antennas (pour les x antennes)
                 self.data = np.array([seq_np[i::self.num_rx_antennas] for i in range(self.num_rx_antennas)])
 
                 self.metadata = {"dir": dir}
                 #print(self.data)
             self.update_signal.emit(self.data)
             # temps pour limiter signal synt
-            time.sleep(0.01)
+            time.sleep(0.05)
             
 
     def stop(self):
@@ -415,6 +424,20 @@ class PlotManager:
         # Personnalisation de l'axe X
         axis = self.plot_widget.getAxis('bottom')   # Récupérer l'axe X
         axis.setLabel('Temps', units='us')          # Label pour l'axe X
+
+        # Ajout d'une légende pour les antennes
+        self.plot_widget.addLegend()
+
+        # Génération dynamique des couleurs pour chaque antenne
+        num_antennas = self.data_thread.num_rx_antennas
+        antenna_colors = [pg.intColor(i, hues=num_antennas) for i in range(num_antennas)]
+
+        # Création des courbes avec légendes
+        self.i_curves = []
+        for i in range(num_antennas):
+            curve = self.plot_widget.plot(pen=antenna_colors[i], name=f"Antenna {i+1}")
+            self.i_curves.append(curve)
+
 
         # Conversion des labels de l'axe X
         def x_axis_transform(value):
@@ -654,8 +677,9 @@ class PlotManager:
                 if self.q_curve is None:
                     self.q_curves = [self.plot_widget.plot(pen=pg.intColor(i + 4)) for i in range(q_data.shape[0])]     # Prends sur une seule antenne
 
+                num_antennas = self.data_thread.num_rx_antennas
                 # Tracer les données I et Q pour chaque antenne
-                for i in range(i_data.shape[0]):  # Boucle sur les 4 antennes
+                for i in range(min(i_data.shape[0], num_antennas)):  # Boucle sur les x antennes
                     self.i_curves[i].setData(x_axis, i_data[i])  # Tracer I pour chaque antenne
                     self.q_curves[i].setData(x_axis, q_data[i])  # Tracer Q pour chaque antenne
 
@@ -924,6 +948,30 @@ class GUI(QMainWindow):
             plot_layout_2.addWidget(slider_velocity)
 
             self.plot_tab_2.setLayout(plot_layout_2)
+
+
+            # Création du slider pour modifier le paramètre de l'angle
+            slider_angle = QGroupBox("Angle Factor")
+            slider_angle_layout = QVBoxLayout()
+            slider_angle.setLayout(slider_angle_layout)
+
+            # Création du slider (de 0 à 10)
+            self.angle_slider = QSlider(Qt.Horizontal)
+            self.angle_slider.setRange(0, 10)  # Valeurs possibles entre 0 et 10
+            self.angle_slider.setValue(5)  # Valeur par défaut
+            self.angle_slider.setTickInterval(1)  # Intervalle de graduation
+
+            # Création d'un label pour afficher la valeur actuelle du slider
+            self.angle_label = QLabel("Angle Factor: 5")
+            self.angle_slider.valueChanged.connect(self.update_angle_value)
+
+            # Ajouter le slider et le label au layout
+            slider_angle_layout.addWidget(self.angle_label)
+            slider_angle_layout.addWidget(self.angle_slider)
+            plot_layout_2.addWidget(slider_angle)
+
+            self.plot_tab_2.setLayout(plot_layout_2)
+
             self.tabs.addTab(self.plot_tab_2, "Synthetique signal")
 
         self.plot_tab_3=QWidget()
@@ -1074,6 +1122,18 @@ class GUI(QMainWindow):
     
         # Appeler une fonction pour mettre à jour le graphique ou les données avec ce facteur
         self.update_plot(self.V)
+
+
+    def update_angle_value(self):
+        # Mise à jour du label en fonction de la valeur du slider
+        self.A = self.angle_slider.value()
+        self.angle_label.setText(f"Angle Factor: {self.A}")
+
+        # Mise à jour de V dans le thread de données
+        self.data_thread.set_A(self.A)
+    
+        # Appeler une fonction pour mettre à jour le graphique ou les données avec ce facteur
+        self.update_plot(self.A)
 
     # lie le slider filtage avec la generation du signal
     def update_smoothing_value(self):
