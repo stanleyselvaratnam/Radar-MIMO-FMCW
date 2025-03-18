@@ -36,7 +36,7 @@ class DataThread(QThread):
         self.running = True
         self.data = None
         self.metadata = None
-        self.num_rx_antennas = 5    # Adaptation pour x antennes
+        self.num_rx_antennas = 4    # Adaptation pour x antennes
 
         self.smoothing_kernel_width = 0
         self.relative_peak_height=20
@@ -63,7 +63,7 @@ class DataThread(QThread):
         # signal generateur
         self.R = 3
         self.V = 0
-        self.A = 5
+        self.A = 15
 
         self.phase_matrix=None
         self.fb_matrix=None
@@ -81,7 +81,7 @@ class DataThread(QThread):
     # Mettre à jour vitesse signal synt
     def set_A(self, A):
         self.A = A  
-        print(f"New A value: {self.A}") 
+        print(f"New A value: {self.A}°") 
 
     # Mettre à jour valeur smooting 
     def set_Smoothing(self, Smoothing):
@@ -119,14 +119,7 @@ class DataThread(QThread):
         n1=0
         t = 0
 
-        # Déphasages entre les antennes en fonction de leur position
-        phase_shifts = [0, np.pi/4,  np.pi/3, np.pi/2,np.pi]  # Déphasage progressif
-        # phase_shifts = [0, np.pi/4, np.pi/2,np.pi]  # Déphasage progressif
-        # phase_shifts = [0, np.pi/2, np.pi]  # Déphasage progressif
-        # phase_shifts = [0, np.pi]  # Déphasage progressif
-        # phase_shifts = [0]  # Déphasage progressif
-        #phase_shifts = [2 * np.pi * (i * d) / wavelength for i in range(self.num_rx_antennas)] # Déphasage progressif
-        print(phase_shifts)
+
         while self.running:
             # signal FIF
             tau=2*self.R/(20*c1)                # facteur 20 pour la distance
@@ -142,7 +135,10 @@ class DataThread(QThread):
 
 
             # value = value_r1# + value_r2 #+ 1j * value_i     # imaginaire non necessaire pour le moment 
-
+            
+            # Calcul dynamique des déphasages en fonction de l'angle A d'une cible
+            phase_shifts = self.calculate_delta_phi(self.A)
+            # print(f"Phase shifts (delta_phi) for angle {self.A}°: {phase_shifts}")  # Debugging
 
             # Génération des signaux pour les 4 antennes
             iq_signals = [
@@ -258,6 +254,24 @@ class DataThread(QThread):
         print("la vitesse est de V:",V)
         return V
     
+    def calculate_delta_phi(self, theta):
+        """
+        Calcule les différences de phase (delta_phi) pour chaque antenne en fonction de l'angle d'arrivée (theta).
+
+        :param theta: Angle en degrés (-90° à 90°)
+        :return: Liste des différences de phase (delta_phi) pour chaque antenne en radians
+        """
+        d = 0.00263  # Distance entre les antennes en mètres
+        wavelength = 0.00526  # Longueur d'onde du signal radar en mètres
+        theta_rad = math.radians(theta)  # Conversion en radians
+
+        # Calcul des phases pour chaque antenne
+        delta_phi_list = [
+            (2 * math.pi * (n * d) * math.sin(theta_rad)) / wavelength
+            for n in range(1, self.num_rx_antennas + 1)  # Boucle de 1 à num_rx_antennas
+        ]
+        
+        return delta_phi_list
 
     def calc_AoA(self, phase_differences, d=0.00263, wavelength=0.00526):
         """
@@ -268,14 +282,15 @@ class DataThread(QThread):
         :param wavelength: Longueur d'onde du signal radar en mètres
         :return: Liste des angles d'arrivée des cibles
         """
-        angles = []
-        for delta_phi in phase_differences:
-            angle = np.arcsin((wavelength * delta_phi) / (2 * np.pi * d))
-            angles.append(np.degrees(angle))  # Convertir en degrés
-        # Affichage Terminal
-        print(f"Angles détectés (A) : {', '.join(f'{a:.2f}°' for a in angles)}")
-        return angles
+        # Calcul de l'angle en utilisant la moyenne des différences de phase
+        delta_phi = phase_differences[0]
+        angle = np.arcsin((wavelength * delta_phi) / (2 * np.pi * d))
+        angle_deg = np.degrees(angle)  # Conversion en degrés
 
+        # Affichage Terminal
+        print(f"Angle détecté (A) : {angle_deg:.2f}°")
+
+        return angle_deg
 
 
     def FFT_Range_doppler_map(self, trimmed_data_np, count_Nc):
@@ -747,23 +762,17 @@ class PlotManager:
                     self.count_Nc = 0
 
             elif self.plot_type == self.PLOT_ANGLE_OF_ARRIVAL:
-                # Simulation d'une liste d’angles détectés (à remplacer par des valeurs réelles)
-                # detected_angles = [-30, -10, 15, 45]  # Exemple : 4 cibles détectées
 
-               # Vérifier si les angles ont déjà été générés
-                if not hasattr(self, 'fixed_angles'):
-                    # Simulation d'une différence de phase entre récepteurs
-                    phase_differences = [np.random.uniform(-np.pi, np.pi) for _ in range(4)]
-                    self.fixed_angles = self.data_thread.calc_AoA(phase_differences)  # Stocker une seule fois les angles
+                # Simulation d'une différence de phase entre récepteurs
+                phase_differences = self.data_thread.calculate_delta_phi(self.data_thread.A)
+                angle = self.data_thread.calc_AoA(phase_differences)  # Un seul angle retourné
 
-                angles = self.fixed_angles  # Utiliser les mêmes angles
-                
                 # Si le graphique n’est pas encore créé, on le configure
                 if self.markers_plot is None:
-                    self.plot_AoA(angles)
+                    self.plot_AoA()
 
                 # Met à jour les données des marqueurs
-                self.markers_plot.setData(angles, np.ones_like(angles))  # y = 1 pour tous les points
+                self.markers_plot.setData([float(angle)], [1])  # y = 1 pour tous les points
 
 
 
@@ -955,14 +964,14 @@ class GUI(QMainWindow):
             slider_angle_layout = QVBoxLayout()
             slider_angle.setLayout(slider_angle_layout)
 
-            # Création du slider (de 0 à 10)
+            # Création du slider (de -90 à 90)
             self.angle_slider = QSlider(Qt.Horizontal)
-            self.angle_slider.setRange(0, 10)  # Valeurs possibles entre 0 et 10
-            self.angle_slider.setValue(5)  # Valeur par défaut
+            self.angle_slider.setRange(-90, 90)  # Valeurs possibles entre 0 et 10
+            self.angle_slider.setValue(15)  # Valeur par défaut
             self.angle_slider.setTickInterval(1)  # Intervalle de graduation
 
             # Création d'un label pour afficher la valeur actuelle du slider
-            self.angle_label = QLabel("Angle Factor: 5")
+            self.angle_label = QLabel("Angle Factor: 15")
             self.angle_slider.valueChanged.connect(self.update_angle_value)
 
             # Ajouter le slider et le label au layout
@@ -1132,6 +1141,12 @@ class GUI(QMainWindow):
         # Mise à jour de V dans le thread de données
         self.data_thread.set_A(self.A)
     
+        # Calcul de delta_phi pour chaque antenne
+        delta_phi_list = self.data_thread.calculate_delta_phi(self.A)
+
+        for i, delta_phi in enumerate(delta_phi_list, start=1):
+            print(f"Antenna {i}: Δφ = {delta_phi:.4f} rad")
+
         # Appeler une fonction pour mettre à jour le graphique ou les données avec ce facteur
         self.update_plot(self.A)
 
@@ -1143,7 +1158,7 @@ class GUI(QMainWindow):
 
         # Mise à jour de V dans le thread de données
         self.data_thread.set_Smoothing(self.Smoothing)
-    
+        
         # Appeler une fonction pour mettre à jour le graphique ou les données avec ce facteur
         self.update_plot(self.Smoothing)
 
