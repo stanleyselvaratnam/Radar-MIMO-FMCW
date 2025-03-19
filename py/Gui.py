@@ -36,7 +36,7 @@ class DataThread(QThread):
         self.running = True
         self.data = None
         self.metadata = None
-        self.num_rx_antennas = 4    # Adaptation pour x antennes
+        self.num_rx_antennas = 8    # Adaptation pour x antennes
 
         self.smoothing_kernel_width = 0
         self.relative_peak_height=20
@@ -674,10 +674,15 @@ class PlotManager:
                 
 
             if self.plot_type == self.PLOT_RAW_SAMPLES:
-                # Filtrage à l'aide de la librairie smoothing filter
-                if self.data_thread.smoothing_kernel_width > 1:
-                    filter = self.data_thread.smoothing_filter(True)
-                    data_np = filter.apply(data_np)
+                
+                filter_instance = self.data_thread.smoothing_filter(True)  # Récupère le bon filtre
+
+                # Vérifier le nombre d'antennes et appliquer le filtre correctement
+                if data_np.ndim > 1:
+                    data_np = np.apply_along_axis(lambda row: filter_instance.apply(row), axis=1, arr=data_np)
+                else:
+                    data_np = filter_instance.apply(data_np)
+
 
                 # Extraire les valeurs réelles et imaginaires (I et Q)
                 i_data = np.real(data_np)  # (4, 150)

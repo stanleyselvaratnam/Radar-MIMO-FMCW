@@ -36,7 +36,16 @@ class SmoothingRaisedCosine(Smoothing):
         self.kernel = self.raised_cosine(n)
     
     def apply(self, x):
+        if self.kernel.size == 0:
+            return x  # Retourne x sans modification
+
+        # Si on a plusieurs antennes (tableau 2D), appliquer le filtrage sur chaque ligne
+        if x.ndim != 1:
+            return np.apply_along_axis(lambda row: np.convolve(row, self.kernel, mode="same"), axis=1, arr=x)
+
+        # Si x est 1D (1 seule antenne), appliquer convolve normalement
         return np.convolve(x, self.kernel, mode="same")
+
 
     @staticmethod
     def raised_cosine(n):
