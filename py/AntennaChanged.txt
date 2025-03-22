@@ -1,0 +1,32 @@
+    def set_num_rx_antennas(self, num_rx):
+        self.num_rx_antennas = num_rx
+        print(f"New Antenna values : {self.num_rx_antennas}")
+ 
+
+     def update_num_rx_antennas(self):
+        self.num_rx_antennas = self.num_rx_slider.value()
+        self.num_rx_label.setText(f"Nombre d'antennes : {self.num_rx_antennas}")
+
+        # Mise à jour de V dans le thread de données
+        self.data_thread.set_num_rx_antennas(self.num_rx_antennas)
+
+        # Appeler une fonction pour mettre à jour le graphique ou les données avec ce facteur
+        self.update_plot(self.num_rx_antennas)
+
+        # Création du slider pour sélectionner le nombre d'antennes réceptrices
+        slider_rx_antennas = QGroupBox("Nombre d'antennes réceptrices")
+        slider_rx_antennas_layout = QVBoxLayout()
+        slider_rx_antennas.setLayout(slider_rx_antennas_layout)
+
+        self.num_rx_slider = QSlider(Qt.Horizontal)
+        self.num_rx_slider.setRange(1, 16)  # Plage de 1 à 16 antennes
+        self.num_rx_slider.setValue(4)  # Valeur initiale
+        self.num_rx_slider.setTickInterval(1)
+
+        self.num_rx_label = QLabel(f"Nombre d'antennes : 4")
+        self.num_rx_slider.valueChanged.connect(self.update_num_rx_antennas)
+
+        # Ajout des widgets au layout
+        slider_rx_antennas_layout.addWidget(self.num_rx_label)
+        slider_rx_antennas_layout.addWidget(self.num_rx_slider)
+        plot_layout_1.addWidget(slider_rx_antennas)  # Ajout à l'onglet "Filter" ou un autre

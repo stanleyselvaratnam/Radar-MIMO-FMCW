@@ -36,7 +36,6 @@ class DataThread(QThread):
         self.running = True
         self.data = None
         self.metadata = None
-        self.num_rx_antennas = 8    # Adaptation pour x antennes
 
         self.smoothing_kernel_width = 0
         self.relative_peak_height=20
@@ -64,6 +63,7 @@ class DataThread(QThread):
         self.R = 3
         self.V = 0
         self.A = 15
+        self.num_rx_antennas = 16   # Adaptation pour x antennes
 
         self.phase_matrix=None
         self.fb_matrix=None
@@ -81,7 +81,7 @@ class DataThread(QThread):
     # Mettre à jour vitesse signal synt
     def set_A(self, A):
         self.A = A  
-        print(f"New A value: {self.A}°") 
+        print(f"New A value: {self.A}°")
 
     # Mettre à jour valeur smooting 
     def set_Smoothing(self, Smoothing):
@@ -272,8 +272,101 @@ class DataThread(QThread):
         ]
         
         return delta_phi_list
+    
+    def calc_AoA_FFT(self, data_np, d=0.00263, wavelength=0.00526):
+        """
+        Calcul de l'angle d'arrivée (AoA) en utilisant une FFT spatiale sur les phases extraites à la fréquence dominante.
+        
+        :param data_np: Matrice NumPy de taille (num_rx_antennas, N), avec N = nb d’échantillons temporels
+        :param d: Distance entre les récepteurs (m)
+        :param wavelength: Longueur d’onde du signal (m)
+        :return: Angle d’arrivée estimé (en degrés)
+        """
+        import numpy as np
 
-    def calc_AoA(self, phase_differences, d=0.00263, wavelength=0.00526):
+        # Vérification des dimensions
+        if data_np.shape[0] != self.num_rx_antennas:
+            raise ValueError(f"data_np a {data_np.shape[0]} lignes, attendu {self.num_rx_antennas}")
+
+        # FFT temporelle sur la première antenne, pour récupérer la fréquence dominante
+        fft0 = np.fft.fft(data_np[0])
+        freqs = np.fft.fftfreq(data_np.shape[1], d=self.te)
+        
+        # On ne garde que les fréquences positives
+        pos_mask = freqs >= 0
+        fft0_pos = np.abs(fft0[pos_mask])
+        freqs_pos = freqs[pos_mask]
+        
+        # Trouver l'indice du pic de fréquence
+        peak_index = np.argmax(fft0_pos)
+        peak_freq = freqs_pos[peak_index]
+        print(f"Fréquence dominante : {peak_freq:.2f} Hz (indice {peak_index})")
+
+        # Extraire les phases à cette fréquence dominante pour chaque antenne
+        spatial_phases = []
+        for rx in range(self.num_rx_antennas):
+            fft_rx = np.fft.fft(data_np[rx])
+            phase = np.angle(fft_rx[pos_mask][peak_index])
+            spatial_phases.append(phase)
+
+        spatial_phases = np.unwrap(spatial_phases)  # Déroulement des phases
+        #spatial_phases = np.array(spatial_phases)
+        
+        # Construction du vecteur complexe spatial
+        spatial_vector = np.exp(1j * spatial_phases) # Permet d'avoir les négatifs des angles
+        # print(spatial_vector)
+        # FFT spatiale
+        spatial_fft = np.fft.fft(spatial_vector)
+        spatial_freqs = np.fft.fftfreq(self.num_rx_antennas, d=d / wavelength)       
+
+        # print(f"Angle estimé : {theta_deg:.2f}°")
+        return spatial_fft, spatial_freqs
+
+
+        # magnitude = np.abs(yf[index[0]])
+        # phase = np.angle(yf[index[0]])
+        # print("Magnitude:", magnitude, ", phase:", phase)
+
+        # # Plot a spectrum 
+        # plt.plot(freq[0:N//2], 2/N*np.abs(yf[0:N//2]), label='amplitude spectrum')   # in a conventional form
+        # plt.plot(freq[0:N//2], np.angle(yf[0:N//2]), label='phase spectrum')
+        # plt.legend()
+        # plt.grid()
+        # plt.show()
+
+
+
+        # print(phase_matrix)
+
+        # if phase_matrix is None or len(phase_matrix) < self.num_rx_antennas:
+        #     print("Erreur: données insuffisantes pour l'angle d'arrivée.")
+        #     return None
+        
+        # # Prendre les 4 premières lignes correspondant aux 4 antennes RX
+        # phase_values = phase_matrix
+        
+        # # Calcul du cosinus des phases
+        # cos_phi = np.cos(phase_values)
+
+        # # Application de la FFT spatiale
+        # fft_spatial = np.fft.fftshift(np.fft.fft(cos_phi, axis=0))
+        
+        # # Trouver le pic principal
+        # magnitude = np.abs(fft_spatial)
+        # peak_index = np.argmax(magnitude)
+        
+        # # Calcul de la fréquence spatiale associée
+        # freq_spatial = (peak_index - 2) / (4 * d)  # 4 récepteurs espacés de d
+        
+        # # Conversion en angle
+        # theta_rad = np.arcsin(wavelength * freq_spatial / (2 * np.pi * d))
+        # theta_deg = np.degrees(theta_rad)
+        
+        # print(f"Angle estimé via FFT spatiale : {theta_deg:.2f}°")
+        #return 0
+
+    
+    def calc_AoA(self, spatial_fft, spatial_freqs, d=0.00263, wavelength=0.00526):
         """
         Calcule l'angle d'arrivée (AoA) en utilisant les différences de phase entre les récepteurs.
         
@@ -283,9 +376,18 @@ class DataThread(QThread):
         :return: Liste des angles d'arrivée des cibles
         """
         # Calcul de l'angle en utilisant la moyenne des différences de phase
-        delta_phi = phase_differences[0]
-        angle = np.arcsin((wavelength * delta_phi) / (2 * np.pi * d))
-        angle_deg = np.degrees(angle)  # Conversion en degrés
+        # delta_phi = phase_differences[0]
+        # angle = np.arcsin((wavelength * delta_phi) / (2 * np.pi * d))
+        # angle_deg = np.degrees(angle)  # Conversion en degrés
+
+        # Trouver la fréquence spatiale dominante
+        peak_spatial_index = np.argmax(np.abs(spatial_fft))
+        sin_theta = spatial_freqs[peak_spatial_index]
+
+        # Limiter pour éviter erreur arcsin
+        sin_theta = np.clip(sin_theta, -1.0, 1.0)
+        theta_rad = np.arcsin(sin_theta)
+        angle_deg = np.degrees(theta_rad)
 
         # Affichage Terminal
         print(f"Angle détecté (A) : {angle_deg:.2f}°")
@@ -374,7 +476,7 @@ class DataThread(QThread):
                 #print(self.data)
             self.update_signal.emit(self.data)
             # temps pour limiter signal synt
-            time.sleep(0.05)
+            time.sleep(0.08)
             
 
     def stop(self):
@@ -402,6 +504,7 @@ class PlotManager:
         self.PLOT_FFT_MAGNITUDE = "fft_magnitude"
         self.PLOT_RANGE = "range"
         self.PLOT_RANGE_DOPPLER_MAP = "Range_doppler_map"
+        self.PLOT_FFT_PHASE = "fft_phase"
         self.PLOT_ANGLE_OF_ARRIVAL= "Angle_of_Arrival"
         self.plot_type = self.PLOT_RAW_SAMPLES
 
@@ -469,14 +572,24 @@ class PlotManager:
         fe = 1/(te*1e3)  # Facteur de conversion
         femin=fe/num_points
         
-        self.plot_widget.setYRange(minY, maxY)             # Limites de l'axe Y
-        self.plot_widget.setXRange(0,num_points/2)        # Limites de l'axe X
         self.plot_widget.setTitle(plot_title)
-        self.i_curve = self.plot_widget.plot(pen='r', name="FFT-Magnitude")
 
-        # Personnalisation de l'axe X
-        axis = self.plot_widget.getAxis('bottom')  # Récupérer l'axe X
-        axis.setLabel('distance', units='m')  # Label pour l'axe X
+        if plot_title == self.PLOT_FFT_PHASE:
+            self.plot_widget.setYRange(-np.pi, np.pi)         # Limites de l'axe Y
+            self.plot_widget.setXRange(0,num_points/2)        # Limites de l'axe X
+            self.i_curve = self.plot_widget.plot(pen='g', name="FFT-Phase")
+
+            # Personnalisation de l'axe X
+            axis = self.plot_widget.getAxis('bottom')  # Récupérer l'axe X
+            axis.setLabel('frequency', units='MHz')  # Label pour l'axe X
+        else:
+            self.plot_widget.setYRange(minY, maxY)            # Limites de l'axe Y
+            self.plot_widget.setXRange(0,num_points/2)        # Limites de l'axe X
+            self.i_curve = self.plot_widget.plot(pen='r', name="FFT-Magnitude")
+
+            # Personnalisation de l'axe X
+            axis = self.plot_widget.getAxis('bottom')  # Récupérer l'axe X
+            axis.setLabel('distance', units='m')  # Label pour l'axe X
 
         # Conversion des labels de l'axe X
         def x_axis_transform(value):
@@ -709,14 +822,14 @@ class PlotManager:
                 #    filter = self.smoothing_filter(True)
                 #    data_np = filter.apply(data_np)
                 # FFT sur FIF
-                f = np.fft.fft(data_np)
+                f = np.fft.fft(data_np[0])
 
                 if self.data_thread.smoothing_kernel_width > 1:
                     filter = self.data_thread.smoothing_filter(True)
                     f = filter.apply(f)
                 
                 angle=np.angle(f)
-                frequence=np.abs(f[0]) # Prends sur une seule antenne 
+                frequence=np.abs(f) # Prends sur une seule antenne 
 
                 # si log
                 if self.logscale:
@@ -766,12 +879,26 @@ class PlotManager:
                     # V = self.data_thread.calc_Velocity(self.data_thread.phase_matrix, n_filter=self.smoothing_kernel_width)
                     self.count_Nc = 0
 
+            elif self.plot_type == self.PLOT_FFT_PHASE :
+
+                
+                fft_phase, freq = self.data_thread.calc_AoA_FFT(data_np)
+                fft_phase = np.abs(fft_phase)
+                # phase = np.unwrap(np.angle(f0))  # Phase sur la première antenne
+                x_axis = np.linspace(0, len(freq), len(freq))
+                
+                # Configuration du plot si nécessaire
+                if self.i_curve is None:
+                    self.plot_FFT(len(fft_phase), self.data_thread.te, self.PLOT_FFT_PHASE, 2*np.pi, -2*np.pi)
+                
+                self.i_curve.setData(x_axis, fft_phase)
+
             elif self.plot_type == self.PLOT_ANGLE_OF_ARRIVAL:
 
                 # Simulation d'une différence de phase entre récepteurs
                 phase_differences = self.data_thread.calculate_delta_phi(self.data_thread.A)
-                angle = self.data_thread.calc_AoA(phase_differences)  # Un seul angle retourné
-
+                fft, freq  = self.data_thread.calc_AoA_FFT(data_np)
+                angle = self.data_thread.calc_AoA(fft, freq)
                 # Si le graphique n’est pas encore créé, on le configure
                 if self.markers_plot is None:
                     self.plot_AoA()
@@ -790,6 +917,7 @@ class GUI(QMainWindow):
     PLOT_FFT_MAGNITUDE = "fft_magnitude"
     PLOT_RANGE = "range"
     PLOT_RANGE_DOPPLER_MAP = "Range_doppler_map"
+    PLOT_FFT_PHASE = "fft_phase"
     PLOT_ANGLE_OF_ARRIVAL = "Angle_of_Arrival"
 
     def __init__(self, server_addr=None, server_port=None, verbose=False):
@@ -861,6 +989,7 @@ class GUI(QMainWindow):
         rd_fft = QRadioButton("FFT magnitude")
         rd_range = QRadioButton("Range")
         rd_fft_anle = QRadioButton("Range_doppler_map")
+        rd_fft_phase = QRadioButton("FFT Phase")
         rd_angle = QRadioButton("Angle_of_Arrival")
         rd_raw.setChecked(True)
 
@@ -869,6 +998,7 @@ class GUI(QMainWindow):
         rd_fft.toggled.connect(lambda: self.set_plot_type(self.PLOT_FFT_MAGNITUDE))
         rd_range.toggled.connect(lambda: self.set_plot_type(self.PLOT_RANGE))
         rd_fft_anle.toggled.connect(lambda: self.set_plot_type(self.PLOT_RANGE_DOPPLER_MAP))
+        rd_fft_phase.toggled.connect(lambda: self.set_plot_type(self.PLOT_FFT_PHASE))
         rd_angle.toggled.connect(lambda: self.set_plot_type(self.PLOT_ANGLE_OF_ARRIVAL))
 
         # Ajout des boutons au groupe et au layout
@@ -876,6 +1006,7 @@ class GUI(QMainWindow):
         plot_group.addButton(rd_fft)
         plot_group.addButton(rd_range)
         plot_group.addButton(rd_fft_anle)
+        plot_group.addButton(rd_fft_phase)
         plot_group.addButton(rd_angle)
 
 
@@ -883,6 +1014,7 @@ class GUI(QMainWindow):
         rd_frame_layout.addWidget(rd_fft)
         rd_frame_layout.addWidget(rd_range)
         rd_frame_layout.addWidget(rd_fft_anle)
+        rd_frame_layout.addWidget(rd_fft_phase)
         rd_frame_layout.addWidget(rd_angle)
         plot_layout_1.addWidget(rd_frame)
 
@@ -1211,7 +1343,7 @@ class GUI(QMainWindow):
         print(f"Plot type set to: {plot_type}")
     
         # Activation/désactivation de l'échelle logarithmique pour FFT uniquement
-        is_fft = plot_type == self.PLOT_FFT_MAGNITUDE
+        is_fft = plot_type in [self.PLOT_FFT_MAGNITUDE, self.PLOT_FFT_PHASE]
         self.logscale_checkbox.setEnabled(is_fft)
         if not is_fft:
             self.logscale_checkbox.setChecked(False)
