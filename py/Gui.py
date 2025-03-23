@@ -7,7 +7,7 @@ import traceback
 import math
 import numpy as np
 import pyqtgraph as pg
-from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QGroupBox, QRadioButton, QButtonGroup,QSlider,QLabel,QCheckBox,QHBoxLayout, QTabWidget, QPushButton
+from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QGroupBox, QRadioButton, QButtonGroup,QSlider,QLabel,QCheckBox,QHBoxLayout, QTabWidget, QPushButton, QComboBox
 from PyQt5.QtCore import pyqtSignal, QThread, Qt
 import iqstreamconverter   
 import ratemeter            
@@ -59,11 +59,18 @@ class DataThread(QThread):
         self.fmax=66E9
         self.Nc=101
 
+        self.targets = [
+            {"R": 3, "V": 0, "A": 15},
+            {"R": 3, "V": 0, "A": 15},
+            {"R": 3, "V": 0, "A": 15},
+            {"R": 3, "V": 0, "A": 15}
+        ]
+
         # signal generateur
         self.R = 3
         self.V = 0
         self.A = 15
-        self.num_rx_antennas = 16   # Adaptation pour x antennes
+        self.num_rx_antennas = 32   # Adaptation pour x antennes
 
         self.phase_matrix=None
         self.fb_matrix=None
@@ -119,11 +126,12 @@ class DataThread(QThread):
         n1=0
         t = 0
 
+        target_1 = self.targets[0] 
 
         while self.running:
             # signal FIF
-            tau=2*self.R/(20*c1)                # facteur 20 pour la distance
-            taut=(tau+2*self.V*t/c1)
+            tau=2*target_1["R"]/(20*c1)                # facteur 20 pour la distance
+            taut=(tau+2*target_1["V"]*t/c1)
             phit = 2 * np.pi * (taut * self.fmin + s * tau * t-((s/2)*taut**2))
             # value_r1 = amplitude * math.cos(phit)#+ 0.1 * random.normalvariate())
             # value_i = amplitude * math.sin(phit)
@@ -137,7 +145,7 @@ class DataThread(QThread):
             # value = value_r1# + value_r2 #+ 1j * value_i     # imaginaire non necessaire pour le moment 
             
             # Calcul dynamique des déphasages en fonction de l'angle A d'une cible
-            phase_shifts = self.calculate_delta_phi(self.A)
+            phase_shifts = self.calculate_delta_phi(target_1["A"])
             # print(f"Phase shifts (delta_phi) for angle {self.A}°: {phase_shifts}")  # Debugging
 
             # Génération des signaux pour les 4 antennes
@@ -476,7 +484,7 @@ class DataThread(QThread):
                 #print(self.data)
             self.update_signal.emit(self.data)
             # temps pour limiter signal synt
-            time.sleep(0.08)
+            time.sleep(0.2)
             
 
     def stop(self):
@@ -942,7 +950,7 @@ class GUI(QMainWindow):
         # Configuration du layout principal
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        layout = QVBoxLayout(self)
+        layout = QVBoxLayout()
         central_widget.setLayout(layout)
 
 
@@ -957,7 +965,8 @@ class GUI(QMainWindow):
         self.data_thread.start()
 
         self.plot_widget = self.graphics_layout.addPlot()
-       
+        self.current_target_index = 0
+
 
         # Instancier PlotManager
         self.plot_manager = PlotManager(self.graphics_layout, self.data_thread,self.plot_widget,logscale=self.logscale, filter_PH=self.filter_PH)
@@ -1051,72 +1060,50 @@ class GUI(QMainWindow):
         if(self.server_addr == None):
             self.plot_tab_2=QWidget()
             plot_layout_2 = QVBoxLayout(self.plot_tab_2)
-            # Création du slider pour modifier le parametre de la distance
-            slider_frame = QGroupBox("Scale Factor")
-            slider_frame_layout = QVBoxLayout()         # Ceci est défini ici, local à la méthode init_config_panel
-            slider_frame.setLayout(slider_frame_layout)
 
-            # Création du slider (de 0 à 10)
-            self.scale_slider = QSlider(Qt.Horizontal)
-            self.scale_slider.setRange(0, 10)           # Valeurs possibles entre 1 et 10
-            self.scale_slider.setValue(3)               # Valeur par défaut
-            self.scale_slider.setTickInterval(1)        # Intervalle de graduation
-        
-            # Création d'un label pour afficher la valeur actuelle du slider
-            self.scale_label = QLabel("Scale Factor: 3")
-            self.scale_slider.valueChanged.connect(self.update_scale_value)
-        
-            # Ajouter le slider et le label au layout
-            slider_frame_layout.addWidget(self.scale_label)
-            slider_frame_layout.addWidget(self.scale_slider)
+            # Sélection de la cible
+            self.target_selector = QComboBox()
+            self.target_selector.addItems(["Cible 1", "Cible 2", "Cible 3", "Cible 4"])
+            self.target_selector.currentIndexChanged.connect(self.on_target_selected)
 
-            plot_layout_2.addWidget(slider_frame)
+            plot_layout_2.addWidget(QLabel("Sélection de la cible :"))
+            plot_layout_2.addWidget(self.target_selector)
+
+            # Sliders pour cible active (initialement Cible 1)
+            self.r_slider = QSlider(Qt.Horizontal)
+            self.v_slider = QSlider(Qt.Horizontal)
+            self.a_slider = QSlider(Qt.Horizontal)
+
+            # Labels
+            self.r_label = QLabel()
+            self.v_label = QLabel()
+            self.a_label = QLabel()
+
+            # Config sliders
+            self.r_slider.setRange(0, 10)
+            self.v_slider.setRange(-10, 10)
+            self.a_slider.setRange(-90, 90)
+
+            # Connexions
+            self.r_slider.valueChanged.connect(lambda val: self.update_target_param("R", val))
+            self.v_slider.valueChanged.connect(lambda val: self.update_target_param("V", val))
+            self.a_slider.valueChanged.connect(lambda val: self.update_target_param("A", val))
+
+            # Ajout au layout
+            plot_layout_2.addWidget(self.r_label)
+            plot_layout_2.addWidget(self.r_slider)
+
+            plot_layout_2.addWidget(self.v_label)
+            plot_layout_2.addWidget(self.v_slider)
+
+            plot_layout_2.addWidget(self.a_label)
+            plot_layout_2.addWidget(self.a_slider)
+
+
             self.plot_tab_2.setLayout(plot_layout_2)
 
-            # Création du slider pour modifier le parametre de la vitesse 
-            slider_velocity = QGroupBox("Velocity Factor")
-            slider_velocity_layout = QVBoxLayout()          # Ceci est défini ici, local à la méthode init_config_panel
-            slider_velocity.setLayout(slider_velocity_layout)
-
-            # Création du slider (de -10 à 10)
-            self.velocity_slider = QSlider(Qt.Horizontal)
-            self.velocity_slider.setRange(-10, 10)  # Valeurs possibles entre 1 et 10
-            self.velocity_slider.setValue(0)  # Valeur par défaut
-            self.velocity_slider.setTickInterval(1)  # Intervalle de graduation
-        
-            # Création d'un label pour afficher la valeur actuelle du slider
-            self.velocity_label = QLabel("velocity Factor: 0")
-            self.velocity_slider.valueChanged.connect(self.update_velocity_value)
-        
-            # Ajouter le slider et le label au layout
-            slider_velocity_layout.addWidget(self.velocity_label)
-            slider_velocity_layout.addWidget(self.velocity_slider)
-            plot_layout_2.addWidget(slider_velocity)
-
-            self.plot_tab_2.setLayout(plot_layout_2)
-
-
-            # Création du slider pour modifier le paramètre de l'angle
-            slider_angle = QGroupBox("Angle Factor")
-            slider_angle_layout = QVBoxLayout()
-            slider_angle.setLayout(slider_angle_layout)
-
-            # Création du slider (de -90 à 90)
-            self.angle_slider = QSlider(Qt.Horizontal)
-            self.angle_slider.setRange(-90, 90)  # Valeurs possibles entre 0 et 10
-            self.angle_slider.setValue(15)  # Valeur par défaut
-            self.angle_slider.setTickInterval(1)  # Intervalle de graduation
-
-            # Création d'un label pour afficher la valeur actuelle du slider
-            self.angle_label = QLabel("Angle Factor: 15")
-            self.angle_slider.valueChanged.connect(self.update_angle_value)
-
-            # Ajouter le slider et le label au layout
-            slider_angle_layout.addWidget(self.angle_label)
-            slider_angle_layout.addWidget(self.angle_slider)
-            plot_layout_2.addWidget(slider_angle)
-
-            self.plot_tab_2.setLayout(plot_layout_2)
+            # Initialiser l'affichage des sliders avec la Cible 1
+            self.on_target_selected(0)
 
             self.tabs.addTab(self.plot_tab_2, "Synthetique signal")
 
@@ -1243,6 +1230,43 @@ class GUI(QMainWindow):
         plot_layout_4.addWidget(rd_window)
         self.plot_tab_4.setLayout(plot_layout_4)
         self.tabs.addTab(self.plot_tab_4, "Windowing")
+
+
+    def on_target_selected(self, index):
+        self.current_target_index = index
+        target = self.data_thread.targets[index]
+
+        # MAJ sliders sans déclencher les signaux
+        self.r_slider.blockSignals(True)
+        self.v_slider.blockSignals(True)
+        self.a_slider.blockSignals(True)
+
+        self.r_slider.setValue(target["R"])
+        self.v_slider.setValue(target["V"])
+        self.a_slider.setValue(target["A"])
+
+        self.r_label.setText(f"Scale Factor (R) : {target['R']}")
+        self.v_label.setText(f"Velocity Factor (V) : {target['V']}")
+        self.a_label.setText(f"Angle Factor (A) : {target['A']}°")
+
+        self.r_slider.blockSignals(False)
+        self.v_slider.blockSignals(False)
+        self.a_slider.blockSignals(False)
+
+        print(f">>> Cible {index+1} sélectionnée — R={target['R']} V={target['V']} A={target['A']}")
+
+    def update_target_param(self, param, value):
+        idx = self.current_target_index
+        self.data_thread.targets[idx][param] = value
+
+        if param == "R":
+            self.r_label.setText(f"Scale Factor (R) : {value}")
+        elif param == "V":
+            self.v_label.setText(f"Velocity Factor (V) : {value}")
+        elif param == "A":
+            self.a_label.setText(f"Angle Factor (A) : {value}°")
+
+        self.update_plot(None)
 
     # lie le slider distance avec la generation du signal
     def update_scale_value(self):
